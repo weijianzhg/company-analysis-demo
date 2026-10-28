@@ -1,0 +1,39 @@
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+credentials.json
+*.pem
+*.key
+
+# Terraform state and account-specific configuration (keep provider locks)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+crash.log
+crash.*.log
+
+# Generated deployment records and test output
+/cloud/builds.json
+/cloud/deployment.json
+/evidence/
+*.log
+
+# Python, downloaded models and editor files
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.models/
+*.gguf
+dist/
+workspace/
+.DS_Store
+.idea/
+.vscode/

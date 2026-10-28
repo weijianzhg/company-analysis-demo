@@ -1,0 +1,21 @@
+[project]
+name = "alpha-vantage-mcp"
+version = "0.1.0"
+description = "Stock prices and financial statements over MCP"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=2.3",
+    "httpx2>=2.14",
+    "boto3",
+]
+
+[dependency-groups]
+# Additional CLI dependencies (boto3 is also used for runtime secret loading).
+client = [
+    "boto3",
+    "httpx2",
+]
+dev = [
+    "pytest",
+    { include-group = "client" },
+]

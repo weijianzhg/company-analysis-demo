@@ -1,0 +1,17 @@
+[project]
+name = "company-performance-agent"
+version = "0.1.0"
+description = "A small company analyst using Alpha Vantage over MCP"
+requires-python = ">=3.10"
+dependencies = [
+    "strands-agents",
+    "bedrock-agentcore",
+    "boto3",
+    "mcp>=1.26,<2",
+    "httpx>=0.28,<1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+]

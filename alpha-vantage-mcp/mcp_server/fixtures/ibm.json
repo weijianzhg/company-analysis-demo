@@ -1,0 +1,88 @@
+{
+  "GLOBAL_QUOTE": {
+    "Global Quote": {
+      "01. symbol": "IBM",
+      "05. price": "200",
+      "07. latest trading day": "2026-01-02",
+      "10. change percent": "1.00%"
+    }
+  },
+  "OVERVIEW": {
+    "Symbol": "IBM",
+    "Name": "IBM (SYNTHETIC TEST DATA)",
+    "Currency": "USD",
+    "EPS": "10",
+    "PERatio": "20",
+    "ForwardPE": "18",
+    "LatestQuarter": "2025-12-31"
+  },
+  "INCOME_STATEMENT": {
+    "symbol": "IBM",
+    "annualReports": [
+      {
+        "fiscalDateEnding": "2025-12-31",
+        "reportedCurrency": "USD",
+        "totalRevenue": "110000000000",
+        "grossProfit": "66000000000",
+        "operatingIncome": "22000000000",
+        "netIncome": "16500000000"
+      },
+      {
+        "fiscalDateEnding": "2024-12-31",
+        "reportedCurrency": "USD",
+        "totalRevenue": "100000000000",
+        "grossProfit": "55000000000",
+        "operatingIncome": "18000000000",
+        "netIncome": "15000000000"
+      }
+    ],
+    "quarterlyReports": [
+      {
+        "fiscalDateEnding": "2025-09-30",
+        "reportedCurrency": "USD",
+        "totalRevenue": "27000000000",
+        "netIncome": "4000000000"
+      }
+    ]
+  },
+  "BALANCE_SHEET": {
+    "symbol": "IBM",
+    "annualReports": [
+      {
+        "fiscalDateEnding": "2025-12-31",
+        "reportedCurrency": "USD",
+        "totalCurrentAssets": "60000000000",
+        "totalCurrentLiabilities": "40000000000",
+        "totalLiabilities": "80000000000",
+        "totalShareholderEquity": "40000000000"
+      },
+      {
+        "fiscalDateEnding": "2024-12-31",
+        "reportedCurrency": "USD",
+        "totalCurrentAssets": "50000000000",
+        "totalCurrentLiabilities": "40000000000",
+        "totalLiabilities": "80000000000",
+        "totalShareholderEquity": "35000000000"
+      }
+    ],
+    "quarterlyReports": []
+  },
+  "CASH_FLOW": {
+    "symbol": "IBM",
+    "annualReports": [
+      {
+        "fiscalDateEnding": "2025-12-31",
+        "reportedCurrency": "USD",
+        "operatingCashflow": "20000000000",
+        "capitalExpenditures": "5000000000"
+      },
+      {
+        "fiscalDateEnding": "2024-12-31",
+        "reportedCurrency": "USD",
+        "operatingCashflow": "18000000000",
+        "capitalExpenditures": "4000000000"
+      }
+    ],
+    "quarterlyReports": []
+  }
+}

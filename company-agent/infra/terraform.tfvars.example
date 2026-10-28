@@ -1,0 +1,13 @@
+aws_region   = "eu-west-1"
+project_name = "company-agent"
+environment  = "dev"
+runtime_type = "agent"
+agent_name   = "company_performance_agent"
+agent_description = "Company performance analyst using Alpha Vantage MCP tools"
+
+# Replace with the tag printed by cloud/build_images.py after both builds succeed.
+container_tag = "latest"
+model_id      = "eu.anthropic.claude-sonnet-4-6"
+
+# Copy agent_runtime_arn from the alpha-vantage-mcp Terraform output.
+mcp_runtime_arn = ""

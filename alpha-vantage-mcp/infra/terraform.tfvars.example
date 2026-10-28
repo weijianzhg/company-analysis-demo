@@ -1,0 +1,12 @@
+aws_region   = "eu-west-1"
+project_name = "alpha-vantage-mcp"
+environment  = "dev"
+runtime_type = "mcp"
+agent_name   = "alpha_vantage_mcp"
+agent_description = "Alpha Vantage stock prices and financial statements over MCP"
+
+# Replace with the tag printed by cloud/build_images.py after both builds succeed.
+container_tag = "latest"
+
+# Start with synthetic IBM data. Set to live after running cloud/set_api_key.py.
+alpha_vantage_mode = "fixture"
