@@ -25,12 +25,41 @@ def output(repo, name):
                                     'output', '-raw', name], text=True).strip()
 
 
+def validate_snapshot(snapshot, mode, allow_missing_overview=False):
+    """The optional valuation limitation must never hide missing statements."""
+    assert snapshot['mode'] == mode
+    required = {'GLOBAL_QUOTE', 'OVERVIEW', 'INCOME_STATEMENT', 'BALANCE_SHEET', 'CASH_FLOW'}
+    missing = required - set(snapshot['datasets'])
+    errors = set(snapshot['errors'])
+    if allow_missing_overview and mode == 'live' and missing == {'OVERVIEW'}:
+        assert errors == {'OVERVIEW'}, f'Unexpected provider failures: {snapshot["errors"]}'
+        assert snapshot['status'] == 'partial'
+        for name in ('trailing_pe', 'forward_pe', 'price_to_eps'):
+            assert snapshot['metrics'][name]['value'] is None, f'{name} must be unavailable without overview'
+    else:
+        assert not missing and not errors and snapshot['status'] == 'complete', (
+            f'Required financial data unavailable: {snapshot["errors"]}; missing: {sorted(missing)}')
+    for name in ('price', 'revenue', 'net_income', 'revenue_growth_pct', 'net_margin_pct',
+                 'free_cash_flow', 'free_cash_flow_growth_pct', 'current_ratio'):
+        assert snapshot['metrics'][name]['value'] is not None, f'Required demo metric unavailable: {name}'
+
+
+def validate_agent_response(response, missing_overview=False):
+    assert response.get('result'), response
+    assert 'get_company_snapshot' in response.get('tools_used', []), response
+    if missing_overview:
+        assert 'p/e unavailable' in response['result'].lower(), 'Agent must explicitly report P/E unavailable'
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--profile', help='AWS profile (otherwise use the standard AWS credential chain)')
     parser.add_argument('--mode', required=True, choices=['fixture', 'live'])
-    parser.add_argument('--allow-partial', action='store_true')
+    parser.add_argument('--allow-missing-overview', action='store_true',
+                        help='Accept unavailable P/E in live mode; quote and all three statements are still required')
     args = parser.parse_args()
+    if args.allow_missing_overview and args.mode != 'live':
+        parser.error('--allow-missing-overview is only for live data')
     if args.profile:
         os.environ['AWS_PROFILE'] = args.profile
     os.environ['MCP_RUNTIME_ARN'] = output('alpha-vantage-mcp', 'agent_runtime_arn')
@@ -64,24 +93,22 @@ def main():
             assert quarter['status'] == 'success'
             evidence['quarterly_tool_checked'] = True
     prompt = ("Use get_company_snapshot to analyze IBM's annual P&L, revenue growth, net margin, "
-              "trailing P/E, free cash flow and current ratio. Include the actual figures and clearly state the data mode."
-              if args.mode == 'fixture' or not args.allow_partial else
-              "Use the stock quote and company overview MCP tools for IBM. Report the latest available price, "
-              "its trading date and trailing P/E. Include the data source, currency and freshness limits.")
+              "trailing P/E, free cash flow and its supplied growth metric, and current ratio. "
+              "Include actual figures, dates, source and data mode. If overview is unavailable, "
+              "write 'P/E unavailable' and its reason; continue analyzing the statements. Keep it under 300 words.")
     evidence['prompt'] = prompt
     evidence['agent_response'] = invoke_agent(agent_arn, {'prompt':prompt}, str(uuid4()),
                                              region=agent_arn.split(':')[3], profile=args.profile)
-    assert evidence['agent_response'].get('tools_used'), evidence['agent_response']
-    if args.mode == 'fixture':
-        assert 'get_company_snapshot' in evidence['agent_response']['tools_used']
-        assert 'synthetic' in evidence['agent_response']['result'].lower()
     path = ROOT / 'evidence/cloud' / f'{args.mode}-end-to-end.json'
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(evidence,indent=2)+'\n')
+    validate_snapshot(snapshot, args.mode, args.allow_missing_overview)
+    validate_agent_response(evidence['agent_response'], 'OVERVIEW' not in snapshot['datasets'])
+    if args.mode == 'fixture':
+        assert 'synthetic' in evidence['agent_response']['result'].lower()
     print(json.dumps({'mode':args.mode,'snapshot_status':snapshot['status'],
+                      'valuation':'unavailable' if 'OVERVIEW' not in snapshot['datasets'] else 'overview available',
                       'tools_used':evidence['agent_response']['tools_used'],'evidence':str(path)}))
-    if snapshot['status'] != 'complete' and not args.allow_partial:
-        raise SystemExit('Cloud connection passed, but full live financial data was unavailable; see evidence errors.')
 
 
 if __name__ == '__main__':

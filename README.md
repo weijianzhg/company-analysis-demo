@@ -131,7 +131,7 @@ uv run --project company-agent/agents --frozen python company-agent/scripts/invo
   --prompt "Analyze IBM's P&L, revenue growth, margins, P/E and cash flow."
 ```
 
-The test checks authentication, all six MCP tools, expected financial calculations, and an actual Bedrock agent response using MCP. It writes results to the ignored `evidence/cloud/` directory. The fixture answer must identify **SYNTHETIC TEST DATA**; expected values include 10% revenue growth, 15% net margin, P/E of 20, and free cash flow of $15 billion.
+The test checks authentication, discovers all six MCP tools, verifies expected financial calculations, and obtains an actual Bedrock agent response using MCP. It writes results to the ignored `evidence/cloud/` directory. The fixture answer must identify **SYNTHETIC TEST DATA**; expected values include 10% revenue growth, 15% net margin, P/E of 20, and free cash flow of $15 billion.
 
 To inspect MCP without the agent:
 
@@ -141,7 +141,7 @@ uv run --project alpha-vantage-mcp/mcp_server --frozen python alpha-vantage-mcp/
 
 ### 7. Switch to live Alpha Vantage data
 
-Get an [Alpha Vantage API key](https://www.alphavantage.co/support/#api-key) with access to the quote, overview, income statement, balance sheet, and cash flow endpoints. The public `demo` key did not provide complete financial statements in our tests.
+Get an [Alpha Vantage API key](https://www.alphavantage.co/support/#api-key) with access to quotes, income statements, balance sheets, and cash flow. Company overview access is also needed for P/E; without it, the agent explicitly reports **P/E unavailable** and analyzes the available statements. The public `demo` key did not provide complete financial statements in our tests.
 
 Store your key in Secrets Manager with the hidden prompt:
 
@@ -154,13 +154,16 @@ Change `alpha_vantage_mode = "live"` in `alpha-vantage-mcp/infra/terraform.tfvar
 ```bash
 terraform -chdir=alpha-vantage-mcp/infra apply
 
-uv run --project company-agent/agents --frozen python cloud/test_end_to_end.py --mode live
+uv run --project company-agent/agents --frozen python cloud/test_end_to_end.py \
+  --mode live --allow-missing-overview
 
 uv run --project company-agent/agents --frozen python company-agent/scripts/invoke.py \
   --prompt "Analyze IBM's latest annual performance, P/E and cash flow. Include dates and any missing data."
 ```
 
-A complete live test requires all five upstream endpoints to return data. Provider quota/access failures remain visible; the server never silently switches to fixtures. A snapshot makes up to five API requests, cached for 15 minutes per process. Uncached live requests are spaced 15 seconds apart, so a cold snapshot takes about a minute. This pacing is per process; multiple runtime sessions share the same upstream key's quota. Respect your API plan's limits and the quote's reported trading date; retrieval time does not mean real-time pricing. See [Alpha Vantage's documentation](https://www.alphavantage.co/documentation/) for endpoint coverage.
+The live command accepts unavailable `OVERVIEW` data, while still requiring a live quote, all three financial statements, usable performance metrics, and an actual agent response using MCP. When overview is missing, the snapshot remains `partial`, all P/E metrics stay `null`, and the agent must say **P/E unavailable**. Other missing datasets still fail the test. Quote currency also remains unknown when the provider does not supply it; statement currency is reported separately. Omit `--allow-missing-overview` to require all five upstream endpoints.
+
+Provider quota/access failures remain visible; the server never silently switches to fixtures. A snapshot makes up to five API requests, cached for 15 minutes per process. Uncached live requests are spaced 15 seconds apart, so a cold snapshot takes about a minute. This pacing is per process; multiple runtime sessions share the same upstream key's quota. Respect your API plan's limits and the quote's reported trading date; retrieval time does not mean real-time pricing. See [Alpha Vantage's documentation](https://www.alphavantage.co/documentation/) for endpoint coverage.
 
 The key is loaded only by the MCP service. Its value is not included in Terraform, images, agent prompts, or Git. The helper records only the non-secret version ID in an ignored `secret-version.auto.tfvars.json` file. Applying the MCP Terraform root then rolls the runtime so it loads the new key. To rotate it later, rerun the key helper and apply the MCP Terraform root again.
 
@@ -186,9 +189,9 @@ Dev ECR images and build source objects are deleted with their resources. Secret
 
 This starts temporary HTTP servers and exercises the real Strands/MCP tool loop using a scripted test model and synthetic data. It needs no AWS credentials or Alpha Vantage key. See [local setup](docs/local.md) to use a real model with both services on your machine.
 
-Cloud verification on **2026-10-29** exercised the deployed agent and MCP with a real Alpha Vantage key: stock quotes, income statements, balance sheets, and cash-flow statements returned live data. The real Bedrock agent called MCP and used these figures. Unsigned requests to both runtimes returned HTTP 403. The earlier complete fixture test also passed.
+Cloud verification on **2026-10-29** passed with `--mode live --allow-missing-overview`: stock quotes, income statements, balance sheets, and cash-flow statements returned live data. The real Bedrock agent called MCP, used these figures, explicitly reported P/E unavailable, and correctly described the supplied cash-flow growth. Unsigned requests to both runtimes returned HTTP 403. All **131 local tests** passed; the earlier complete cloud fixture test also passed.
 
-**Remaining provider restriction:** `OVERVIEW` returned an explicit premium-endpoint error for the tested key, so P/E values were unavailable. The strict full-live test correctly remains unsuccessful until all five endpoints are accessible. Statement data is usable independently; the agent must disclose missing valuation data. These tests verify transport, tool use, and calculated metrics; model-written explanations still need review.
+**Valuation limitation:** `OVERVIEW` returned an explicit premium-endpoint error for the tested key, so P/E values are unavailable. The supported `--allow-missing-overview` test checks statement analysis with this limitation; the default strict test still requires all five endpoints. Cash-flow growth is calculated in the MCP with fiscal-period and currency checks before the agent describes a trend. These tests verify transport, tool use, and calculated metrics; model-written explanations still need review.
 
 ## Read the core implementation
 

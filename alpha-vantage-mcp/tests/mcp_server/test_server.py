@@ -83,3 +83,19 @@ def test_missing_key_does_not_fall_back_to_fixture(monkeypatch):
     result = call('get_company_snapshot', {'symbol': 'IBM'})
     assert result.is_error
     assert 'ALPHA_VANTAGE_API_KEY' in result.content[0].text
+
+
+def test_premium_overview_is_explicitly_unavailable_without_losing_statements(monkeypatch):
+    real_fetch = server.api.fetch
+    async def fetch(function, symbol):
+        if function == 'OVERVIEW':
+            raise AlphaVantageError('Alpha Vantage Information: This is a premium endpoint')
+        return await real_fetch(function, symbol)
+    monkeypatch.setattr(server.api, 'fetch', fetch)
+    data = json.loads(call('get_company_snapshot', {'symbol': 'IBM'}).content[0].text)
+    assert data['status'] == 'partial'
+    assert set(data['errors']) == {'OVERVIEW'}
+    assert set(data['datasets']) == {'GLOBAL_QUOTE', 'INCOME_STATEMENT', 'BALANCE_SHEET', 'CASH_FLOW'}
+    for name in ('trailing_pe', 'forward_pe', 'price_to_eps'):
+        assert data['metrics'][name]['value'] is None
+    assert data['metrics']['free_cash_flow']['value'] == 15_000_000_000

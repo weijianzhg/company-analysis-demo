@@ -12,6 +12,17 @@ def number(value):
         return None
 
 
+def comparable_years(current, previous):
+    """Only compare adjacent annual reports in the same known currency."""
+    try:
+        gap = (date.fromisoformat(current.get("fiscalDateEnding", ""))
+               - date.fromisoformat(previous.get("fiscalDateEnding", ""))).days
+        currency = current.get("reportedCurrency")
+        return 330 <= gap <= 400 and currency not in (None, "", "unknown") and previous.get("reportedCurrency") == currency
+    except (ValueError, TypeError):
+        return False
+
+
 def calculate_metrics(data: dict) -> tuple[dict, list[str]]:
     metrics = {}
     notes = ["Quotes are the latest available trading-day values, not guaranteed real time.",
@@ -41,6 +52,8 @@ def calculate_metrics(data: dict) -> tuple[dict, list[str]]:
             "provider overview snapshot", f"OVERVIEW: {field}")
     add("price_to_eps", ratio(price, eps), "multiple", "latest quote / overview trailing EPS",
         "latest available price / positive trailing EPS; dates may differ from provider P/E")
+    if not overview:
+        notes.append("Company overview unavailable: P/E and trailing EPS are unavailable; do not estimate them from annual net income.")
     income = reports("INCOME_STATEMENT")
     if not income:
         notes.append("Annual income statements unavailable; annual performance metrics omitted.")
@@ -57,11 +70,7 @@ def calculate_metrics(data: dict) -> tuple[dict, list[str]]:
             f"{field} / positive totalRevenue × 100")
 
     previous = income[1] if len(income) > 1 else {}
-    try:
-        gap = (date.fromisoformat(period) - date.fromisoformat(previous.get("fiscalDateEnding", ""))).days
-        comparable = 330 <= gap <= 400 and previous.get("reportedCurrency") == currency != "unknown"
-    except (ValueError, TypeError):
-        comparable = False
+    comparable = comparable_years(current, previous)
     for name, field in (("revenue_growth_pct", "totalRevenue"), ("net_income_growth_pct", "netIncome")):
         latest, prior = number(current.get(field)), number(previous.get(field))
         growth = ratio(latest - prior, prior, 100) if comparable and latest is not None and prior is not None else None
@@ -85,7 +94,17 @@ def calculate_metrics(data: dict) -> tuple[dict, list[str]]:
         "multiple", period, "totalLiabilities / positive totalShareholderEquity; not debt-to-equity")
     operating_cash, capex = number(cash.get("operatingCashflow")), number(cash.get("capitalExpenditures"))
     add("operating_cash_flow", operating_cash, currency, period, "CASH_FLOW: operatingCashflow")
-    add("free_cash_flow", operating_cash - abs(capex) if operating_cash is not None and capex is not None else None,
+    free_cash = operating_cash - abs(capex) if operating_cash is not None and capex is not None else None
+    add("free_cash_flow", free_cash,
         currency, period, "operatingCashflow - abs(capitalExpenditures); simple cash-flow proxy")
+    prior_cash = next((r for r in reports("CASH_FLOW") if comparable_years(cash, r)), {})
+    prior_operating, prior_capex = number(prior_cash.get("operatingCashflow")), number(prior_cash.get("capitalExpenditures"))
+    prior_free = prior_operating - abs(prior_capex) if prior_operating is not None and prior_capex is not None else None
+    for name, latest, prior in (("operating_cash_flow_growth_pct", operating_cash, prior_operating),
+                                ("free_cash_flow_growth_pct", free_cash, prior_free)):
+        growth = ratio(latest - prior, prior, 100) if latest is not None and prior is not None else None
+        add(name, growth, "percent", period, "(current - prior comparable annual cash flow) / positive prior cash flow × 100")
+    if not prior_cash:
+        notes.append("Cash-flow growth needs comparable annual reports in the same currency.")
     notes.append("Null means unavailable or not meaningful (including zero/negative ratio denominators).")
     return metrics, notes

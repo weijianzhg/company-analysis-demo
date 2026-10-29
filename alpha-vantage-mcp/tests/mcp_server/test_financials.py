@@ -62,3 +62,38 @@ def test_report_order_and_inputs_are_preserved(data):
     assert metrics['revenue']['period'] == '2025-12-31'
     assert metrics['revenue_growth_pct']['value'] == 10
     assert data == original
+
+
+def test_missing_overview_keeps_pe_unavailable_and_preserves_statements(data):
+    del data['OVERVIEW']
+    metrics, notes = calculate_metrics(data)
+    for name in ('trailing_pe', 'forward_pe', 'price_to_eps'):
+        assert metrics[name]['value'] is None
+    assert metrics['price']['unit'] == 'unknown'
+    assert metrics['revenue_growth_pct']['value'] == 10
+    assert any('P/E and trailing EPS are unavailable' in note for note in notes)
+
+
+def test_cash_flow_trend_uses_comparable_free_cash_flow(data):
+    # Regression: 12.102 billion is an increase from 11.760 billion.
+    data['CASH_FLOW']['annualReports'] = [
+        {'fiscalDateEnding': '2025-12-31', 'reportedCurrency': 'USD',
+         'operatingCashflow': '13193000000', 'capitalExpenditures': '1091000000'},
+        {'fiscalDateEnding': '2024-12-31', 'reportedCurrency': 'USD',
+         'operatingCashflow': '13300000000', 'capitalExpenditures': '-1540000000'},
+    ]
+    metrics, _ = calculate_metrics(data)
+    assert metrics['free_cash_flow']['value'] == 12_102_000_000
+    assert metrics['free_cash_flow_growth_pct']['value'] == 2.9082
+    assert metrics['operating_cash_flow_growth_pct']['value'] == -0.8045
+
+
+@pytest.mark.parametrize('field,value', [
+    ('fiscalDateEnding', '2023-12-31'), ('reportedCurrency', 'EUR'),
+    ('operatingCashflow', '0'), ('operatingCashflow', None),
+])
+def test_cash_growth_rejects_incomparable_or_nonpositive_prior(data, field, value):
+    data['CASH_FLOW']['annualReports'][1][field] = value
+    metrics, _ = calculate_metrics(data)
+    assert metrics['operating_cash_flow_growth_pct']['value'] is None
+    assert metrics['free_cash_flow_growth_pct']['value'] is None
