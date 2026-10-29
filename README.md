@@ -160,9 +160,9 @@ uv run --project company-agent/agents --frozen python company-agent/scripts/invo
   --prompt "Analyze IBM's latest annual performance, P/E and cash flow. Include dates and any missing data."
 ```
 
-A complete live test requires all five upstream endpoints to return data. Provider quota/access failures remain visible; the server never silently switches to fixtures. A snapshot makes up to five API requests, cached for 15 minutes per process. Respect your API plan's limits and the quote's reported trading date; retrieval time does not mean real-time pricing. See [Alpha Vantage's documentation](https://www.alphavantage.co/documentation/) for endpoint coverage.
+A complete live test requires all five upstream endpoints to return data. Provider quota/access failures remain visible; the server never silently switches to fixtures. A snapshot makes up to five API requests, cached for 15 minutes per process. Uncached live requests are spaced 15 seconds apart, so a cold snapshot takes about a minute. This pacing is per process; multiple runtime sessions share the same upstream key's quota. Respect your API plan's limits and the quote's reported trading date; retrieval time does not mean real-time pricing. See [Alpha Vantage's documentation](https://www.alphavantage.co/documentation/) for endpoint coverage.
 
-The key is loaded only by the MCP service. Its value is not included in Terraform, images, agent prompts, or Git. To rotate it later, rerun the key helper and start a new runtime session.
+The key is loaded only by the MCP service. Its value is not included in Terraform, images, agent prompts, or Git. The helper records only the non-secret version ID in an ignored `secret-version.auto.tfvars.json` file. Applying the MCP Terraform root then rolls the runtime so it loads the new key. To rotate it later, rerun the key helper and apply the MCP Terraform root again.
 
 ## Update or remove the deployment
 
@@ -186,7 +186,9 @@ Dev ECR images and build source objects are deleted with their resources. Secret
 
 This starts temporary HTTP servers and exercises the real Strands/MCP tool loop using a scripted test model and synthetic data. It needs no AWS credentials or Alpha Vantage key. See [local setup](docs/local.md) to use a real model with both services on your machine.
 
-The original experiment also passed cloud tests with a real Bedrock model and both AgentCore endpoints, using synthetic statements. Live quote and overview calls passed with the public demo key; **complete live financial-statement analysis has not been verified with a production Alpha Vantage key**.
+Cloud verification on **2026-10-29** exercised the deployed agent and MCP with a real Alpha Vantage key: stock quotes, income statements, balance sheets, and cash-flow statements returned live data. The real Bedrock agent called MCP and used these figures. Unsigned requests to both runtimes returned HTTP 403. The earlier complete fixture test also passed.
+
+**Remaining provider restriction:** `OVERVIEW` returned an explicit premium-endpoint error for the tested key, so P/E values were unavailable. The strict full-live test correctly remains unsuccessful until all five endpoints are accessible. Statement data is usable independently; the agent must disclose missing valuation data. These tests verify transport, tool use, and calculated metrics; model-written explanations still need review.
 
 ## Read the core implementation
 

@@ -45,8 +45,9 @@ resource "aws_bedrockagentcore_agent_runtime" "this" {
       MODEL_ID      = aws_bedrock_inference_profile.agent[0].arn
     } : {},
     local.is_agent ? {} : {
-      ALPHA_VANTAGE_MODE       = var.alpha_vantage_mode
-      ALPHA_VANTAGE_SECRET_ARN = aws_secretsmanager_secret.alpha_vantage[0].arn
+      ALPHA_VANTAGE_MODE        = var.alpha_vantage_mode
+      ALPHA_VANTAGE_SECRET_ARN  = aws_secretsmanager_secret.alpha_vantage[0].arn
+      ALPHA_VANTAGE_KEY_VERSION = var.alpha_vantage_key_version
     },
   )
 

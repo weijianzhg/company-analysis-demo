@@ -6,6 +6,7 @@ The key is never printed or passed as a command-line argument or Terraform value
 
 import argparse
 from getpass import getpass
+import json
 from pathlib import Path
 import subprocess
 
@@ -27,9 +28,13 @@ def main():
         raise SystemExit('Supply a non-demo Alpha Vantage API key.')
     arn = subprocess.check_output(['terraform', f'-chdir={ROOT / "alpha-vantage-mcp/infra"}',
                                    'output', '-raw', 'alpha_vantage_secret_arn'], text=True).strip()
-    boto3.Session(profile_name=args.profile, region_name=arn.split(':')[3]).client('secretsmanager').put_secret_value(
+    version = boto3.Session(profile_name=args.profile, region_name=arn.split(':')[3]).client('secretsmanager').put_secret_value(
         SecretId=arn, SecretString=key)
-    print('Alpha Vantage secret updated. Start a new runtime session or deploy a new runtime version to load it.')
+    # Explicitly roll the runtime after rotation instead of relying on its
+    # session lifecycle to reload the secret at process startup.
+    revision_file = ROOT / 'alpha-vantage-mcp/infra/secret-version.auto.tfvars.json'
+    revision_file.write_text(json.dumps({'alpha_vantage_key_version': version['VersionId']}, indent=2) + '\n')
+    print('Alpha Vantage secret updated. Apply alpha-vantage-mcp/infra to load the new key into the runtime.')
 
 
 if __name__ == '__main__':

@@ -98,7 +98,7 @@ run "mcp_server_has_no_model_access" {
     error_message = "MCP servers must use the MCP server protocol."
   }
   assert {
-    condition     = length(aws_bedrockagentcore_agent_runtime.this.filesystem_configuration) == 0 && toset(keys(aws_bedrockagentcore_agent_runtime.this.environment_variables)) == toset(["LOG_LEVEL", "ALPHA_VANTAGE_MODE", "ALPHA_VANTAGE_SECRET_ARN"])
+    condition     = length(aws_bedrockagentcore_agent_runtime.this.filesystem_configuration) == 0 && toset(keys(aws_bedrockagentcore_agent_runtime.this.environment_variables)) == toset(["LOG_LEVEL", "ALPHA_VANTAGE_MODE", "ALPHA_VANTAGE_SECRET_ARN", "ALPHA_VANTAGE_KEY_VERSION"])
     error_message = "MCP servers get no session storage, workspace, or model settings."
   }
   assert {

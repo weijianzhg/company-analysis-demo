@@ -36,10 +36,13 @@ class AlphaVantageError(ToolError):
 
 
 class AlphaVantage:
-    def __init__(self, api_key: str = "", mode: str = "live", transport=None):
+    def __init__(self, api_key: str = "", mode: str = "live", transport=None, request_interval: float = 0):
         if mode not in {"live", "fixture"}:
             raise ValueError("ALPHA_VANTAGE_MODE must be live or fixture")
         self.api_key, self.mode, self.transport = api_key, mode, transport
+        if request_interval < 0:
+            raise ValueError("Request interval must be nonnegative")
+        self.request_interval, self.next_request_at = request_interval, 0
         self.cache = {}
         self.lock = asyncio.Lock()
 
@@ -55,7 +58,7 @@ class AlphaVantage:
                 key = secret.get_secret_value(SecretId=secret_arn)["SecretString"].strip()
             except Exception:
                 raise AlphaVantageError("Cannot load the Alpha Vantage key from Secrets Manager") from None
-        return cls(key, mode)
+        return cls(key, mode, request_interval=float(os.environ.get("ALPHA_VANTAGE_REQUEST_INTERVAL", "15")))
 
     @staticmethod
     def normalize_symbol(symbol: str) -> str:
@@ -75,6 +78,11 @@ class AlphaVantage:
                 result = deepcopy(cached[1])
                 result["cached"] = True
                 return result
+            if self.mode == "live":
+                delay = self.next_request_at - time.monotonic()
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                self.next_request_at = time.monotonic() + self.request_interval
             data = await self._request(function, symbol)
             self._validate(data, function, symbol)
             source = "Alpha Vantage" if self.mode == "live" else "Local synthetic fixture (Alpha Vantage schema)"
@@ -109,17 +117,17 @@ class AlphaVantage:
         except ValueError:
             raise AlphaVantageError("Alpha Vantage returned invalid JSON") from None
 
-    @staticmethod
-    def _validate(data, function: str, symbol: str):
+    def _validate(self, data, function: str, symbol: str):
         if not isinstance(data, dict):
             raise AlphaVantageError("Alpha Vantage returned an unexpected response")
         # HTTP 200 errors can contain a key or a URL with credentials.
-        if "Note" in data:
-            raise AlphaVantageError("Alpha Vantage quota/rate limit reached; wait or check your plan")
-        if "Information" in data:
-            raise AlphaVantageError("Alpha Vantage declined this request; check quota, key and endpoint entitlement")
-        if "Error Message" in data:
-            raise AlphaVantageError("Alpha Vantage rejected the ticker or request")
+        for field in ("Note", "Information", "Error Message"):
+            if field in data:
+                message = str(data[field])
+                if self.api_key:
+                    message = message.replace(self.api_key, "[REDACTED]")
+                message = re.sub(r'(?i)([?&]apikey=)[^&\s"\']+', r'\1[REDACTED]', message)
+                raise AlphaVantageError(f"Alpha Vantage {field}: {message[:500]}")
         if function == "GLOBAL_QUOTE":
             quote = data.get("Global Quote", {})
             returned_symbol = quote.get("01. symbol") if isinstance(quote, dict) else None

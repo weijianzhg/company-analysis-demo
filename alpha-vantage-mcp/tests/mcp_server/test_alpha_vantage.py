@@ -97,3 +97,37 @@ def test_secret_loading_errors_are_redacted(monkeypatch):
     with pytest.raises(AlphaVantageError) as caught:
         AlphaVantage.from_environment()
     assert 'private-key' not in str(caught.value)
+
+
+def test_provider_limit_details_are_preserved_without_credentials():
+    body = {'Information': 'Limit: 5 calls per minute. Key private-test-key; https://example.com/?apikey=other-key'}
+    async def run():
+        client = AlphaVantage('private-test-key', transport=httpx2.MockTransport(lambda r: httpx2.Response(200, json=body)))
+        with pytest.raises(AlphaVantageError) as caught:
+            await client.fetch('OVERVIEW', 'IBM')
+        message = str(caught.value)
+        assert '5 calls per minute' in message
+        assert 'private-test-key' not in message
+        assert 'other-key' not in message
+    anyio.run(run)
+
+
+def test_only_uncached_live_requests_are_paced(monkeypatch):
+    import alpha_vantage
+    now, sleeps, calls = [100.0], [], []
+    monkeypatch.setattr(alpha_vantage.time, 'monotonic', lambda: now[0])
+    async def sleep(delay):
+        sleeps.append(delay)
+        now[0] += delay
+    monkeypatch.setattr(alpha_vantage.asyncio, 'sleep', sleep)
+    def handle(request):
+        calls.append(now[0])
+        return httpx2.Response(200, json={'Symbol': request.url.params['symbol']})
+    async def run():
+        client = AlphaVantage('test-key', request_interval=15, transport=httpx2.MockTransport(handle))
+        await client.fetch('OVERVIEW', 'IBM')
+        await client.fetch('OVERVIEW', 'IBM')
+        await client.fetch('OVERVIEW', 'AAPL')
+    anyio.run(run)
+    assert calls == [100, 115]
+    assert sleeps == [15]

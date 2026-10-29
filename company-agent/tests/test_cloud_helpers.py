@@ -37,24 +37,31 @@ def test_build_completion_requires_both_successes(statuses, expected):
         assert module.check_builds(codebuild, record) is expected
 
 
-def test_secret_uses_arn_region_and_never_prints_key(monkeypatch, capsys):
+def test_secret_uses_arn_region_and_records_only_revision(monkeypatch, capsys, tmp_path):
     module = load('set_api_key')
     secret_arn = 'arn:aws:secretsmanager:us-west-2:123456789012:secret:test'
     calls = []
+    monkeypatch.setattr(module, 'ROOT', tmp_path)
+    (tmp_path / 'alpha-vantage-mcp/infra').mkdir(parents=True)
     monkeypatch.setattr('sys.argv', ['set_api_key.py'])
     monkeypatch.setattr(module, 'getpass', lambda prompt: '  private-test-key  ')
     monkeypatch.setattr(module.subprocess, 'check_output', lambda *args, **kwargs: secret_arn)
 
     def session(**kwargs):
         calls.append(kwargs)
+        def put_secret(**values):
+            calls.append(values)
+            return {'VersionId': 'test-version-id'}
         return SimpleNamespace(client=lambda service: SimpleNamespace(
-            put_secret_value=lambda **values: calls.append(values)))
+            put_secret_value=put_secret))
 
     monkeypatch.setattr(module.boto3, 'Session', session)
     module.main()
     assert calls == [{'profile_name': None, 'region_name': 'us-west-2'},
                      {'SecretId': secret_arn, 'SecretString': 'private-test-key'}]
     assert 'private-test-key' not in capsys.readouterr().out
+    revision_file = tmp_path / 'alpha-vantage-mcp/infra/secret-version.auto.tfvars.json'
+    assert json.loads(revision_file.read_text()) == {'alpha_vantage_key_version': 'test-version-id'}
 
 
 @pytest.mark.parametrize('key', ['', 'demo'])

@@ -8,6 +8,12 @@ variable "alpha_vantage_mode" {
   }
 }
 
+variable "alpha_vantage_key_version" {
+  description = "Non-secret Secrets Manager version ID; changing it rolls the runtime to reload its API key"
+  type        = string
+  default     = ""
+}
+
 resource "aws_secretsmanager_secret" "alpha_vantage" {
   count                   = local.is_agent ? 0 : 1
   name                    = "${local.name_prefix}/alpha-vantage-api-key"

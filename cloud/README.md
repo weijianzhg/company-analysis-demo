@@ -16,6 +16,8 @@ AgentCore endpoints require AWS SigV4. The agent signs MCP requests using its ru
 
 CodeBuild uploads include only the explicit source allowlists in `build_images.py`. They exclude local dotenv files, Terraform state, Git history and model downloads. S3 expires source archives after seven days; CodeBuild logs have seven-day retention. Builds run on demand.
 
+Live requests are spaced 15 seconds apart per MCP process, configurable with `ALPHA_VANTAGE_REQUEST_INTERVAL` (seconds). Cache hits and fixture requests do not wait. This prevents rapid sequential bursts, but does not coordinate quotas across multiple runtime sessions or increase the provider's daily allowance. Provider messages are preserved with API keys redacted so quota and entitlement failures can be distinguished.
+
 ## Configuration and state
 
 The guide uses `eu-west-1`. Set `aws_region` consistently in both runtime configurations and `TF_VAR_aws_region` for all three Terraform roots if changing regions; choose an available model/inference profile for that region. Other region/model combinations have not been verified by this demo.
@@ -33,7 +35,7 @@ Provider lockfiles and Python lockfiles are committed. Local state, plans, tfvar
 | Bedrock `AccessDeniedException` | Run the model check in step 2 with the provisioning profile. Confirm model availability, first-use requirements, Marketplace activation, IAM policies and organization restrictions. |
 | ECR repository not found during build setup | Complete both bootstrap applies in step 3; keep ECR names consistent with `locals.projects`. |
 | CodeBuild fails | Run `build_images.py status`; follow the returned log links. Do not deploy the tag until both builds succeed. |
-| MCP cannot load its API key | Run `set_api_key.py` after the secret has been created, then start a new runtime session. Fixture mode does not read the secret value. |
+| MCP cannot load its API key, or still uses the previous key | Run `set_api_key.py` after the secret has been created, then apply `alpha-vantage-mcp/infra`. The helper records a non-secret version ID to force a runtime update. Fixture mode does not read the secret value. |
 | Alpha Vantage quota/access error | Inspect the partial snapshot's `errors`. Use a key with the required access and wait for your quota window before retrying. There is no automatic fixture fallback. |
 | Signed client receives 403 | Check the selected AWS profile and permission to invoke the relevant runtime/endpoint. An unsigned request receiving 401/403 is expected. |
 | Newly deployed runtime is not ready | Inspect its status in the AgentCore console and retry after it is ready; examine runtime logs if startup failed. |
@@ -48,8 +50,10 @@ uv run --project company-agent/agents --frozen python cloud/set_api_key.py \
   --env-file /absolute/path/to/private.env
 ```
 
-The key is written directly to Secrets Manager, outside Terraform state. The runtime loads it at startup. New invocations through the supplied CLI use fresh session IDs.
+The key is written directly to Secrets Manager, outside Terraform state. Only its non-secret version ID is recorded in the ignored `alpha-vantage-mcp/infra/secret-version.auto.tfvars.json` file. Apply that Terraform root after each rotation: the changed version ID triggers a runtime update, which reloads the key at startup without relying on the session lifecycle.
 
 `test_end_to_end.py --mode fixture` verifies known synthetic metrics and real model tool use. `--mode live` requires a complete live snapshot and asks the agent to analyze financial performance. It writes account-specific results to ignored `evidence/cloud/`. `--allow-partial` permits a partial live quote/overview demonstration; it does not prove complete statement access.
+
+The 2026-10-29 live run retrieved quotes and all three financial statements through MCP, and the agent used them. The remaining `OVERVIEW` response explicitly required premium access for that key. The strict test therefore exited nonzero, with P/E unavailable. Do not repeatedly rerun an entitlement failure; enable the required provider access before expecting the full-live check to pass.
 
 For cleanup, use the three destroy commands in the main README with the same AWS profile and state. The build bucket and development ECR repositories allow their contents to be deleted. Runtime-created log groups may remain after Terraform destroy.
