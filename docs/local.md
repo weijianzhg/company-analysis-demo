@@ -29,7 +29,7 @@ AWS_PROFILE=your-profile
 AWS_REGION=eu-west-1
 ```
 
-Authenticate your profile and verify model access as described in the [main guide](../README.md). Only model inference runs on AWS; these instructions run both services locally.
+Authenticate your profile and verify model access as described in the [FAQ](faq.md#what-do-i-need-before-deploying). Only model inference runs on AWS; these instructions run both services locally.
 
 For a **local model**, use a tool-capable [llama.cpp](https://github.com/ggml-org/llama.cpp) server. The experiment used Qwen3.5-4B Q4_K_M:
 
