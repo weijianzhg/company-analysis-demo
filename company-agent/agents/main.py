@@ -18,18 +18,18 @@ def prompt_events(prompt: str):
     if not invocation_lock.acquire(blocking=False):
         yield {"error": "Agent is busy; retry after the current request finishes"}
         return
-    completed = Queue(maxsize=1)
+    events = Queue()
 
     def run():
         try:
-            response = analyze(prompt)
+            response = analyze(prompt, on_tool_event=events.put)
         except Exception as exc:
             # Avoid printing provider exception bodies or credential-bearing URLs.
             app.logger.error("Analysis failed (%s)", type(exc).__name__)
-            response = {"error": f"Analysis failed ({type(exc).__name__}); check MCP_URL, model settings and credentials"}
+            response = {"error": f"Analysis failed ({type(exc).__name__}); check MCP endpoint settings, model settings and credentials"}
         finally:
             invocation_lock.release()
-        completed.put(response)
+        events.put(response)
 
     worker = Thread(target=copy_context().run, args=(run,), daemon=True)
     try:
@@ -40,8 +40,10 @@ def prompt_events(prompt: str):
     yield {"type": "heartbeat"}
     while True:
         try:
-            yield completed.get(timeout=HEARTBEAT_SECONDS)
-            return
+            event = events.get(timeout=HEARTBEAT_SECONDS)
+            yield event
+            if "result" in event or "error" in event:
+                return
         except Empty:
             yield {"type": "heartbeat"}
 

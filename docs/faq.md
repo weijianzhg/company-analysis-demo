@@ -37,13 +37,16 @@ flowchart LR
     Agent -->|IAM / SigV4| MCP[Alpha Vantage MCP on AgentCore]
     MCP --> API[Alpha Vantage API]
     MCP --> Secret[AWS Secrets Manager]
+    Agent -->|IAM / SigV4| Knowledge[Internal knowledge MCP]
+    Knowledge --> S3[S3 Markdown folders]
 ```
 
-Three Terraform roots manage separate parts of the deployment:
+Four Terraform roots manage separate parts of the deployment:
 
 | Root | Resources |
 | --- | --- |
 | `alpha-vantage-mcp/infra` | MCP runtime and IAM role, ECR repository, Alpha Vantage secret metadata |
+| `internal-knowledge-mcp/infra` | MCP runtime, ECR repository, and read-only IAM access to an existing S3 bucket/prefix |
 | `company-agent/infra` | Agent runtime and IAM role, ECR repository, Bedrock application inference profile |
 | `cloud/build` | Private encrypted S3 source bucket, ARM CodeBuild projects, build role and logs |
 
@@ -51,7 +54,7 @@ The agent gets financial data through MCP. Python calculates the financial metri
 
 ## Why create repositories before deploying the runtimes?
 
-The runtimes need container images, and the builds need existing ECR repositories. The targeted Terraform applies in the README bootstrap those repositories and the secret container. Full applies deploy the runtimes after both images are built. The secret can remain empty in fixture mode.
+The runtimes need container images, and the builds need existing ECR repositories. The targeted Terraform applies in the README bootstrap those repositories and the secret container. Full applies deploy the runtimes after all three images are built. The secret can remain empty in fixture mode.
 
 CodeBuild builds ARM64 images, so local Docker is not required. Uploads include only the source allowlists in `cloud/build_images.py`; dotenv files, Terraform state, Git history, and model downloads are excluded. Build source archives expire after seven days, and build logs have seven-day retention.
 
@@ -63,11 +66,11 @@ From the repository root, using the same AWS profile:
 uv run --project company-agent/agents --frozen python cloud/build_images.py status --wait
 ```
 
-The command reports each build's status and log link. Deploy the printed tag only after both builds succeed. The ignored `cloud/builds.json` records the latest tag, build IDs, and source hashes.
+The command reports each build's status and log link. Deploy the printed tag only after all three builds succeed. The ignored `cloud/builds.json` records the latest tag, build IDs, and source hashes.
 
 ## Why start with synthetic data?
 
-Fixture mode tests the complete AWS path without an Alpha Vantage key. Both AgentCore endpoints and the Bedrock model are real; the IBM financial inputs are synthetic and answers must say **SYNTHETIC TEST DATA**. Fixture mode supports IBM only.
+Fixture mode tests the complete AWS path without an Alpha Vantage key. The financial MCP, agent endpoint and Bedrock model are real; the IBM financial inputs are synthetic and answers must say **SYNTHETIC TEST DATA**. Fixture mode supports IBM only.
 
 Expected fixture metrics include 10% revenue growth, 15% net margin, P/E of 20, USD 15 billion free cash flow, and a 1.5 current ratio. Live provider failures never trigger an automatic switch to fixtures.
 
@@ -83,9 +86,9 @@ The six tools are `get_stock_quote`, `get_company_overview`, `get_income_stateme
 
 ## How are the endpoints authorized?
 
-Both `DEFAULT` endpoints require AWS IAM authentication through SigV4. Use the provided signed clients to invoke them. Unsigned requests are rejected; these are API endpoints, not browser pages.
+All three `DEFAULT` endpoints require AWS IAM authentication through SigV4. Use the provided signed clients to invoke them. Unsigned requests are rejected; these are API endpoints, not browser pages.
 
-The agent signs MCP requests using its runtime role, whose policy permits invoking this MCP runtime and its `DEFAULT` endpoint. Caller identity is not propagated to MCP. The MCP role can read its own API secret; the agent has no access to the Alpha Vantage key. The `PUBLIC` network setting allows outbound internet access while IAM authenticates inbound calls. See [AWS's MCP hosting guide](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-mcp.html).
+The agent signs MCP requests using its runtime role, whose policy permits invoking the configured MCP runtimes and their `DEFAULT` endpoints. Caller identity is not propagated to MCP. The financial MCP role can read its own API secret. The knowledge MCP role can list and read only its configured S3 prefix. The agent has no direct access to the Alpha Vantage key or knowledge bucket. All agent callers share the configured document scope. The `PUBLIC` network setting allows outbound internet access while IAM authenticates inbound calls. See [AWS's MCP hosting guide](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-mcp.html).
 
 ## Where is the API key stored, and how do I rotate it?
 
@@ -135,7 +138,9 @@ Free cash flow is `operatingCashflow - abs(capitalExpenditures)`. Cash-flow grow
 
 ## What has been tested?
 
-On **2026-10-29**, the deployed live test passed with `--allow-missing-overview`: quotes and all three financial statements reached the real Bedrock agent through MCP. The agent reported P/E unavailable and correctly described the supplied cash-flow growth. Both endpoints rejected unsigned requests with HTTP 403. All **131 local tests** passed; an earlier complete cloud fixture test also passed.
+On **2026-10-29**, the deployed live test passed with `--allow-missing-overview`: quotes and all three financial statements reached the real Bedrock agent through MCP. The agent reported P/E unavailable and correctly described the supplied cash-flow growth. Both endpoints rejected unsigned requests with HTTP 403. At that time, all **131 local tests** passed; an earlier complete cloud fixture test also passed.
+
+On **2026-11-02**, an isolated AWS deployment also verified the two-MCP extension with real Bedrock inference, live Alpha Vantage data and synthetic Markdown in S3. The agent retrieved and cited internal documents, discovered them from a natural-language question, and streamed tool start/success/failure events before its final answer. All three endpoints rejected unsigned requests with HTTP 403. S3 IAM evaluation allowed reads only within the configured prefix and denied writes. The financial overview remained unavailable because of the provider subscription; the answer disclosed this explicitly. Use `--knowledge-path companies/IBM/research.md --require-tool-events` to repeat these checks for your deployment.
 
 The cloud test checks authentication, discovers all six tools, rejects an invalid ticker, verifies snapshot metrics, and obtains a real agent response using MCP. Account-specific evidence is written to the ignored `evidence/cloud/` directory. Live tests consume provider quota and incur AWS charges.
 
@@ -153,13 +158,13 @@ For an interactive local demo using Bedrock or a local llama.cpp model, follow [
 
 ## How do I update the deployment or change its configuration?
 
-After changing source code, run the image build again, wait for both builds to succeed, and put the new `container_tag` in both runtime `terraform.tfvars` files. Apply the MCP root, then the agent root, and run the test for the active data mode. See [quick deploy](../README.md#quick-deploy) for the commands.
+After changing source code, run the image build again, wait for all three builds to succeed, and put the new `container_tag` in all three runtime `terraform.tfvars` files. Apply both MCP roots, then the agent root, and run the test for the active data mode. See [quick deploy](../README.md#quick-deploy) for the commands.
 
-Persist `container_tag` and `mcp_runtime_arn` in those ignored files; stale values can revert a runtime image or MCP connection. Preserve the three Terraform state directories and use the same AWS profile/region. Configure a private remote state backend before sharing infrastructure management. State, plans, tfvars, build records, and test evidence are ignored by Git; provider and Python lockfiles are committed.
+Persist `container_tag`, `mcp_runtime_arn` and `internal_knowledge_mcp_runtime_arn` in those ignored files; stale values can revert a runtime image or MCP connection. Preserve the four Terraform state directories and use the same AWS profile/region. Configure a private remote state backend before sharing infrastructure management. State, plans, tfvars, build records, and test evidence are ignored by Git; provider and Python lockfiles are committed.
 
-To change regions, set `aws_region` consistently in both runtime configurations and `TF_VAR_aws_region` for all roots. Choose an available Bedrock model, verify access, and update `model_id` in the agent configuration. Region/model combinations beyond the documented defaults have not been verified by this demo.
+To change regions, set `aws_region` consistently in all three runtime configurations and `TF_VAR_aws_region` for all roots. Choose an available Bedrock model, verify access, and update `model_id` in the agent configuration. Region/model combinations beyond the documented defaults have not been verified by this demo.
 
-The build projects look up `company-agent-dev` and `alpha-vantage-mcp-dev`. If renaming them, also update `locals.projects` in `cloud/build/main.tf`. Multiple demos need distinct build buckets, roles, log groups, and project names. The blueprint's optional GitHub OIDC and remote-backend settings are not enabled by the quick deploy.
+The build projects look up `company-agent-dev`, `alpha-vantage-mcp-dev` and `internal-knowledge-mcp-dev`. If renaming them, also update `locals.projects` in `cloud/build/main.tf`. Multiple demos need distinct build buckets, roles, log groups, and project names. The blueprint's optional GitHub OIDC and remote-backend settings are not enabled by the quick deploy.
 
 ## What should I check when something fails?
 
@@ -167,7 +172,7 @@ The build projects look up `company-agent-dev` and `alpha-vantage-mcp-dev`. If r
 | --- | --- |
 | Bedrock `AccessDeniedException` | Run the model check above; verify model access, first-use requirements, Marketplace activation, IAM policies, and organization restrictions. |
 | ECR repository not found | Complete the bootstrap applies and keep ECR names consistent with `locals.projects`. |
-| CodeBuild fails | Run `build_images.py status`; follow its log links. Wait for both builds to succeed before deploying. |
+| CodeBuild fails | Run `build_images.py status`; follow its log links. Wait for all three builds to succeed before deploying. |
 | MCP cannot load its key or uses an old one | Run `set_api_key.py`, then apply the MCP Terraform root to load the new secret version. |
 | Alpha Vantage quota/access error | Inspect `snapshot.errors`. Check key access and the quota window; the runtime does not fall back to fixtures. |
 | A signed request receives 403 | Check the selected AWS profile and its permission to invoke that runtime/endpoint. Unsigned 401/403 responses are expected. |
@@ -181,19 +186,23 @@ Using the same AWS profile and saved Terraform state, review and confirm these p
 ```bash
 terraform -chdir=company-agent/infra destroy
 terraform -chdir=alpha-vantage-mcp/infra destroy
+terraform -chdir=internal-knowledge-mcp/infra destroy
 terraform -chdir=cloud/build destroy
 ```
 
-Development ECR images and build source objects are deleted with their resources. Secrets Manager has a seven-day recovery window. Runtime-created CloudWatch log groups may remain; remove the groups belonging to these runtimes if no longer needed.
+Development ECR images and build source objects are deleted with their resources. The existing knowledge bucket and documents are not managed or deleted by this demo. Secrets Manager has a seven-day recovery window. Runtime-created CloudWatch log groups may remain; remove the groups belonging to these runtimes if no longer needed.
 
 ## Where should I start reading the code?
 
 | File | Purpose |
 | --- | --- |
 | [analyst.py](../company-agent/agents/analyst.py) | Model, prompt, and MCP tool loop |
+| [mcp_connections.py](../company-agent/agents/mcp_connections.py) | Explicit MCP connections and paginated discovery |
 | [cloud_mcp.py](../company-agent/agents/cloud_mcp.py) | IAM-signed MCP transport |
 | [server.py](../alpha-vantage-mcp/mcp_server/server.py) | Six financial tools |
 | [alpha_vantage.py](../alpha-vantage-mcp/mcp_server/alpha_vantage.py) | Provider requests, caching, pacing, and safe errors |
 | [financials.py](../alpha-vantage-mcp/mcp_server/financials.py) | Financial formulas and missing-value handling |
+
+The [internal knowledge guide](../internal-knowledge-mcp/README.md) explains folder layout, retrieval tools, search limits and S3 configuration.
 
 The agent's generic invocation/build helpers are inherited from the blueprint. Use `scripts/invoke.py --prompt` for this demo; the generic CLI's workspace/file-management actions are not supported by the analyst runtime.

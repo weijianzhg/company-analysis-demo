@@ -25,6 +25,9 @@ def main():
                 event = json.loads(line[5:])
                 if event.get("type") == "heartbeat":
                     continue
+                if event.get("type") == "tool_call":
+                    print(f"[{event['server']}] {event['tool']}: {event['status']}", file=sys.stderr, flush=True)
+                    continue
                 if "error" in event:
                     raise RuntimeError(event["error"])
                 if "result" in event:

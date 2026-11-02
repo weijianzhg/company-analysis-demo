@@ -3,9 +3,11 @@
 
 import argparse
 from datetime import datetime, timezone
+from functools import partial
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 from uuid import uuid4
@@ -46,27 +48,59 @@ def validate_snapshot(snapshot, mode, allow_missing_overview=False):
 
 def validate_agent_response(response, missing_overview=False):
     assert response.get('result'), response
+    assert len(response['result'].split()) <= 300, 'Agent answer exceeded the 300-word limit'
     assert 'get_company_snapshot' in response.get('tools_used', []), response
     if missing_overview:
-        assert 'p/e unavailable' in response['result'].lower(), 'Agent must explicitly report P/E unavailable'
+        assert re.search(r'\bp/e[\s:*_–—-]+unavailable\b', response['result'], re.IGNORECASE), (
+            'Agent must explicitly report P/E unavailable')
+
+
+def validate_tool_events(events, tools_used):
+    pending, completed = {}, []
+    for event in events:
+        assert set(event) == {'type', 'id', 'tool', 'server', 'status'}, 'Unexpected tool progress payload'
+        assert event['type'] == 'tool_call'
+        if event['status'] == 'started':
+            assert event['id'] not in pending
+            pending[event['id']] = (event['tool'], event['server'])
+        else:
+            assert event['status'] == 'succeeded', event
+            assert pending.pop(event['id']) == (event['tool'], event['server'])
+            completed.append(event['tool'])
+    assert not pending, 'Some tool calls never completed'
+    assert completed == tools_used, 'Progress must cover every executed tool call'
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--profile', help='AWS profile (otherwise use the standard AWS credential chain)')
+    parser.add_argument('--agent-runtime-arn', help='Use an existing agent instead of Terraform output')
+    parser.add_argument('--financial-mcp-runtime-arn', help='Use an existing financial MCP instead of Terraform output')
+    parser.add_argument('--knowledge-mcp-runtime-arn', help='Use an existing knowledge MCP instead of Terraform output')
     parser.add_argument('--mode', required=True, choices=['fixture', 'live'])
     parser.add_argument('--allow-missing-overview', action='store_true',
                         help='Accept unavailable P/E in live mode; quote and all three statements are still required')
+    parser.add_argument('--knowledge-path', help='Also verify internal MCP and agent retrieval of this relative Markdown path')
+    parser.add_argument('--require-tool-events', action='store_true', help='Require live start/success events for every tool call')
     args = parser.parse_args()
     if args.allow_missing_overview and args.mode != 'live':
         parser.error('--allow-missing-overview is only for live data')
     if args.profile:
         os.environ['AWS_PROFILE'] = args.profile
-    os.environ['MCP_RUNTIME_ARN'] = output('alpha-vantage-mcp', 'agent_runtime_arn')
-    agent_arn = output('company-agent', 'agent_runtime_arn')
+    os.environ['MCP_RUNTIME_ARN'] = args.financial_mcp_runtime_arn or output('alpha-vantage-mcp', 'agent_runtime_arn')
+    agent_arn = args.agent_runtime_arn or output('company-agent', 'agent_runtime_arn')
     evidence = {'tested_at':datetime.now(timezone.utc).isoformat(), 'mode':args.mode,
                 'mcp_runtime_arn':os.environ['MCP_RUNTIME_ARN'], 'agent_runtime_arn':agent_arn}
-    for label, arn in [('agent',agent_arn), ('mcp',os.environ['MCP_RUNTIME_ARN'])]:
+    endpoints = [('agent', agent_arn), ('mcp', os.environ['MCP_RUNTIME_ARN'])]
+    if args.knowledge_path:
+        knowledge_arn = args.knowledge_mcp_runtime_arn or output('internal-knowledge-mcp', 'agent_runtime_arn')
+        endpoints.append(('knowledge', knowledge_arn))
+        with MCPClient(partial(mcp_transport, arn=knowledge_arn)) as client:
+            result = client.call_tool_sync('knowledge-check', 'read_internal_document', {'path': args.knowledge_path})
+            assert result['status'] == 'success', result
+            document = next(json.loads(block['text']) for block in result['content'] if 'text' in block)
+            evidence['knowledge_source'] = document['source']
+    for label, arn in endpoints:
         url, _ = runtime_endpoint(arn)
         response = httpx.post(url, json={'prompt':'Unauthorized access test'}, timeout=30)
         assert response.status_code in (401,403), f'{label}: anonymous request returned {response.status_code}'
@@ -96,14 +130,29 @@ def main():
               "trailing P/E, free cash flow and its supplied growth metric, and current ratio. "
               "Include actual figures, dates, source and data mode. If overview is unavailable, "
               "write 'P/E unavailable' and its reason; continue analyzing the statements. Keep it under 300 words.")
+    if args.knowledge_path:
+        prompt += (f" Also call read_internal_document for {args.knowledge_path}, summarize the internal context "
+                   "and cite its S3 source. Distinguish synthetic notes from real company facts.")
     evidence['prompt'] = prompt
+    evidence['tool_events'] = []
+
+    def on_tool_event(event):
+        evidence['tool_events'].append(event)
+        print(f"[{event['server']}] {event['tool']}: {event['status']}", flush=True)
+
     evidence['agent_response'] = invoke_agent(agent_arn, {'prompt':prompt}, str(uuid4()),
-                                             region=agent_arn.split(':')[3], profile=args.profile)
+                                             region=agent_arn.split(':')[3], profile=args.profile,
+                                             on_tool_event=on_tool_event)
     path = ROOT / 'evidence/cloud' / f'{args.mode}-end-to-end.json'
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(evidence,indent=2)+'\n')
     validate_snapshot(snapshot, args.mode, args.allow_missing_overview)
     validate_agent_response(evidence['agent_response'], 'OVERVIEW' not in snapshot['datasets'])
+    if args.require_tool_events:
+        validate_tool_events(evidence['tool_events'], evidence['agent_response']['tools_used'])
+    if args.knowledge_path:
+        assert 'read_internal_document' in evidence['agent_response']['tools_used']
+        assert evidence['knowledge_source'] in evidence['agent_response']['result']
     if args.mode == 'fixture':
         assert 'synthetic' in evidence['agent_response']['result'].lower()
     print(json.dumps({'mode':args.mode,'snapshot_status':snapshot['status'],

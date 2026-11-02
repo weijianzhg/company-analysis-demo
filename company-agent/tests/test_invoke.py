@@ -291,3 +291,30 @@ def test_missing_terraform_output_has_actionable_error(monkeypatch, stdout):
     monkeypatch.setattr(invoke.subprocess, "run", Mock(return_value=SimpleNamespace(stdout=stdout)))
     with pytest.raises(RuntimeError, match="deploy the runtime or pass --arn"):
         invoke.get_runtime_arn_from_terraform()
+
+
+@pytest.mark.parametrize('use_callback', [False, True])
+def test_tool_events_are_delivered_before_final_result(monkeypatch, capsys, use_callback):
+    _, _, client = mock_aws(monkeypatch)
+    received = []
+    progress = {'type': 'tool_call', 'id': 'one', 'server': 'internal-knowledge',
+                'tool': 'read_internal_document', 'status': 'started'}
+    stream = Mock()
+
+    def lines(chunk_size):
+        yield b'data: ' + json.dumps(progress).encode()
+        if use_callback:
+            assert received == [progress]
+        else:
+            assert '[internal-knowledge] read_internal_document: started' in capsys.readouterr().err
+        yield b'data: ' + json.dumps(dict(progress, status='succeeded')).encode()
+        yield b'data: {"result": "Done"}'
+
+    stream.iter_lines.side_effect = lines
+    client.invoke_agent_runtime.return_value = {'contentType': 'text/event-stream', 'response': stream}
+    result = invoke.invoke_agent(ARN, {'prompt': 'IBM'}, SESSION_ID,
+                                 on_tool_event=received.append if use_callback else None)
+    assert result == {'result': 'Done'}
+    if use_callback:
+        assert [event['status'] for event in received] == ['started', 'succeeded']
+    stream.close.assert_called_once()

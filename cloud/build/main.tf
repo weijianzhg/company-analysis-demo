@@ -14,7 +14,7 @@ provider "aws" {
 }
 data "aws_caller_identity" "current" {}
 locals {
-  projects = { mcp = "alpha-vantage-mcp-dev", agent = "company-agent-dev" }
+  projects = { mcp = "alpha-vantage-mcp-dev", agent = "company-agent-dev", knowledge = "internal-knowledge-mcp-dev" }
 }
 data "aws_ecr_repository" "images" {
   for_each = local.projects

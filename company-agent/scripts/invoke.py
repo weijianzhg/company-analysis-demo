@@ -52,8 +52,8 @@ def get_runtime_arn_from_terraform(profile: str | None = None) -> str:
     return runtime_arn
 
 
-def read_streamed_result(stream) -> dict:
-    """Consume AgentCore SSE heartbeats until the final result arrives."""
+def read_streamed_result(stream, on_tool_event=None) -> dict:
+    """Show tool progress (or forward it to a UI callback) until the final result."""
     reported_progress = False
     # Read small chunks so a heartbeat is visible without waiting for more data.
     for line in stream.iter_lines(chunk_size=1):
@@ -66,6 +66,12 @@ def read_streamed_result(stream) -> dict:
             if not reported_progress:
                 print("Agent is working...", file=sys.stderr, flush=True)
                 reported_progress = True
+            continue
+        if event.get("type") == "tool_call":
+            if on_tool_event is not None:
+                on_tool_event(event)
+            else:
+                print(f"[{event['server']}] {event['tool']}: {event['status']}", file=sys.stderr, flush=True)
             continue
         if "result" in event or "error" in event:
             return event
@@ -82,6 +88,7 @@ def invoke_agent(
     session_id: str,
     region: str | None = None,
     profile: str | None = None,
+    on_tool_event=None,
 ) -> dict:
     """Send one request without retrying an agent that may perform side effects."""
     validate_session_id(session_id)
@@ -100,7 +107,7 @@ def invoke_agent(
     stream = response["response"]
     try:
         if "text/event-stream" in response.get("contentType", ""):
-            result = read_streamed_result(stream)
+            result = read_streamed_result(stream, on_tool_event=on_tool_event)
         else:
             result = json.loads(stream.read())
     finally:

@@ -194,3 +194,22 @@ run "repeated_underscores_have_valid_profile_name" {
     error_message = "AgentCore allows repeated underscores but Bedrock profile names do not."
   }
 }
+
+run "agent_can_invoke_both_mcps" {
+  command = apply
+  variables {
+    mcp_runtime_arn                    = "arn:aws:bedrock-agentcore:eu-west-1:123456789012:runtime/financials-123"
+    internal_knowledge_mcp_runtime_arn = "arn:aws:bedrock-agentcore:eu-west-1:123456789012:runtime/knowledge-123"
+  }
+  assert {
+    condition     = aws_bedrockagentcore_agent_runtime.this.environment_variables["INTERNAL_KNOWLEDGE_MCP_RUNTIME_ARN"] == var.internal_knowledge_mcp_runtime_arn
+    error_message = "The second MCP endpoint must reach the agent configuration."
+  }
+  assert {
+    condition = toset(jsondecode(aws_iam_role_policy.mcp_invoke[0].policy).Statement[0].Resource) == toset([
+      var.mcp_runtime_arn, "${var.mcp_runtime_arn}/runtime-endpoint/DEFAULT",
+      var.internal_knowledge_mcp_runtime_arn, "${var.internal_knowledge_mcp_runtime_arn}/runtime-endpoint/DEFAULT"
+    ])
+    error_message = "Agent invocation must be restricted to the two configured MCP runtimes."
+  }
+}

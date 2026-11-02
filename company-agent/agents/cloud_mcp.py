@@ -39,10 +39,13 @@ def runtime_endpoint(arn: str):
     return f"{endpoint}/runtimes/{quote(arn, safe='')}/invocations?qualifier=DEFAULT", AwsSigV4(credentials, parts[3])
 
 
-def mcp_transport():
-    arn = os.environ.get("MCP_RUNTIME_ARN")
+def mcp_transport(url=None, arn=None):
+    """Open one endpoint. No arguments retain the original financial MCP settings."""
+    if url is None and arn is None:
+        url = os.environ.get("MCP_URL", "http://127.0.0.1:8000/mcp")
+        arn = os.environ.get("MCP_RUNTIME_ARN")
     if not arn:
-        return streamablehttp_client(os.environ.get("MCP_URL", "http://127.0.0.1:8000/mcp"))
+        return streamablehttp_client(url)
     url, auth = runtime_endpoint(arn)
     return streamablehttp_client(url, auth=auth, terminate_on_close=False,
                                 headers={"X-Amzn-Bedrock-AgentCore-Runtime-Session-Id": str(uuid4())})

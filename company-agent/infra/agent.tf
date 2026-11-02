@@ -45,7 +45,7 @@ resource "aws_bedrockagentcore_agent_runtime" "this" {
       MODEL_ID       = aws_bedrock_inference_profile.agent[0].arn
       MODEL_PROVIDER = "bedrock"
     } : {},
-    var.mcp_runtime_arn != "" ? { MCP_RUNTIME_ARN = var.mcp_runtime_arn } : {},
+    local.is_agent ? local.mcp_environment : {},
   )
 
   depends_on = [

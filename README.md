@@ -1,8 +1,25 @@
 # Company analysis with AgentCore and MCP
 
-Ask an AI agent about a company's stock price, P&L, growth, and cash flow. The agent retrieves Alpha Vantage data through a separate MCP service; both run on AWS Bedrock AgentCore.
+Ask one agent about company financial performance and your internal research. It uses two independent MCP services: Alpha Vantage for financial data, and an S3-backed internal knowledge service for Markdown documents. All three services run on AWS Bedrock AgentCore.
 
-[FAQ and troubleshooting](docs/faq.md) · [Run locally](docs/local.md)
+[Run locally](docs/local.md) · [Internal knowledge MCP](internal-knowledge-mcp/README.md) · [FAQ](docs/faq.md)
+
+```mermaid
+flowchart LR
+    User[Company question] --> Agent[Company agent]
+    Agent --> Financials[Alpha Vantage MCP]
+    Agent --> Knowledge[Internal knowledge MCP]
+    Financials --> API[Alpha Vantage API]
+    Knowledge --> S3[S3 Markdown folders]
+```
+
+Users receive live tool-start and completion events while the agent works; see
+[the streaming event format](company-agent/README.md#live-tool-progress).
+
+Each service has its own source, dependencies and infrastructure. Start with
+`company-agent/agents/analyst.py` for the agent loop and `mcp_connections.py` for
+its connections. Each MCP's `mcp_server/server.py` declares its tools; the data
+access lives beside it. Adding a service follows this same pattern.
 
 ## Quick deploy
 
@@ -25,7 +42,19 @@ aws sts get-caller-identity
 
 cp company-agent/infra/terraform.tfvars.example company-agent/infra/terraform.tfvars
 cp alpha-vantage-mcp/infra/terraform.tfvars.example alpha-vantage-mcp/infra/terraform.tfvars
+cp internal-knowledge-mcp/infra/terraform.tfvars.example internal-knowledge-mcp/infra/terraform.tfvars
 ```
+
+Set `knowledge_bucket` to your existing S3 bucket and `knowledge_prefix` to the
+Markdown root folder in `internal-knowledge-mcp/infra/terraform.tfvars`. Use a bucket
+in the deployment region. For the example below, upload the clearly labeled sample:
+
+```bash
+aws s3 cp internal-knowledge-mcp/examples/ s3://YOUR-BUCKET/knowledge/ --recursive
+```
+
+Use `knowledge_prefix = "knowledge/"` for that layout. See the
+[knowledge guide](internal-knowledge-mcp/README.md) for your own files and KMS settings.
 
 ### 2. Create repositories and build images
 
@@ -34,10 +63,14 @@ Confirm the AWS account above, then review and approve each Terraform plan. Keep
 ```bash
 terraform -chdir=alpha-vantage-mcp/infra init
 terraform -chdir=company-agent/infra init
+terraform -chdir=internal-knowledge-mcp/infra init
 terraform -chdir=alpha-vantage-mcp/infra apply \
   -target=aws_ecr_repository.agent -target=aws_ecr_lifecycle_policy.agent \
   -target=aws_secretsmanager_secret.alpha_vantage
 terraform -chdir=company-agent/infra apply \
+  -target=aws_ecr_repository.agent -target=aws_ecr_lifecycle_policy.agent
+
+terraform -chdir=internal-knowledge-mcp/infra apply \
   -target=aws_ecr_repository.agent -target=aws_ecr_lifecycle_policy.agent
 
 terraform -chdir=cloud/build init
@@ -45,23 +78,27 @@ terraform -chdir=cloud/build apply
 uv run --project company-agent/agents --frozen python cloud/build_images.py start --wait
 ```
 
-After **both builds succeed**, set `container_tag` in both `infra/terraform.tfvars` files to the printed image tag.
+After **all three builds succeed**, set `container_tag` in each service’s `infra/terraform.tfvars` file to the printed image tag.
 
-### 3. Deploy MCP, then the agent
+### 3. Deploy both MCPs, then the agent
 
 ```bash
 terraform -chdir=alpha-vantage-mcp/infra apply
 terraform -chdir=alpha-vantage-mcp/infra output -raw agent_runtime_arn
+terraform -chdir=internal-knowledge-mcp/infra apply
+terraform -chdir=internal-knowledge-mcp/infra output -raw agent_runtime_arn
 ```
 
-Copy that ARN into `mcp_runtime_arn` in `company-agent/infra/terraform.tfvars`, then:
+Copy the financial MCP ARN into `mcp_runtime_arn` and the knowledge MCP ARN into
+`internal_knowledge_mcp_runtime_arn` in `company-agent/infra/terraform.tfvars`, then:
 
 ```bash
 terraform -chdir=company-agent/infra apply
-uv run --project company-agent/agents --frozen python cloud/test_end_to_end.py --mode fixture
+uv run --project company-agent/agents --frozen python cloud/test_end_to_end.py \
+  --mode fixture --knowledge-path companies/IBM/research.md --require-tool-events
 ```
 
-Both endpoints require AWS IAM authentication. The initial test uses the real Bedrock model with **SYNTHETIC TEST DATA**.
+All endpoints require AWS IAM authentication. The initial test uses the real Bedrock model with **SYNTHETIC TEST DATA**.
 
 ## Use it
 
@@ -71,6 +108,17 @@ Ask a question with a ticker; each question starts a fresh analysis. Fixture mod
 uv run --project company-agent/agents --frozen python company-agent/scripts/invoke.py \
   --prompt "Analyze IBM's annual performance, revenue growth, margins, P/E and cash flow."
 ```
+
+Ask about the internal sample, or combine both sources:
+
+```bash
+uv run --project company-agent/agents --frozen python company-agent/scripts/invoke.py \
+  --prompt "Analyze IBM financial performance and summarize our internal hybrid cloud research. Cite the internal documents."
+```
+
+Internal documents are retrieved from S3 independently of the financial data mode.
+For financial-only use, leave both internal MCP settings unset. Existing `MCP_URL`
+and `MCP_RUNTIME_ARN` settings still select the financial service.
 
 ### Enable live data
 

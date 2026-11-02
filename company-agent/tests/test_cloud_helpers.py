@@ -18,17 +18,17 @@ def load(name):
 
 
 @pytest.mark.parametrize('statuses, expected', [
-    (['SUCCEEDED', 'SUCCEEDED'], True),
-    (['SUCCEEDED', 'IN_PROGRESS'], False),
-    (['SUCCEEDED', 'FAILED'], RuntimeError),
-    (['SUCCEEDED', 'STOPPED'], RuntimeError),
+    (['SUCCEEDED', 'SUCCEEDED', 'SUCCEEDED'], True),
+    (['SUCCEEDED', 'IN_PROGRESS', 'SUCCEEDED'], False),
+    (['SUCCEEDED', 'SUCCEEDED', 'FAILED'], RuntimeError),
+    (['SUCCEEDED', 'STOPPED', 'SUCCEEDED'], RuntimeError),
     (['SUCCEEDED'], RuntimeError),
 ])
-def test_build_completion_requires_both_successes(statuses, expected):
+def test_build_completion_requires_every_service(statuses, expected):
     module = load('build_images')
-    record = {'builds': {'agent': {'id': 'agent-id'}, 'mcp': {'id': 'mcp-id'}}}
+    record = {'builds': {'agent': {'id': 'agent-id'}, 'mcp': {'id': 'mcp-id'}, 'knowledge': {'id': 'knowledge-id'}}}
     builds = [{'id': kind + '-id', 'projectName': kind, 'buildStatus': status}
-              for kind, status in zip(('agent', 'mcp'), statuses)]
+              for kind, status in zip(('agent', 'mcp', 'knowledge'), statuses)]
     codebuild = SimpleNamespace(batch_get_builds=lambda **kwargs: {'builds': builds})
     if expected is RuntimeError:
         with pytest.raises(RuntimeError):
@@ -82,7 +82,7 @@ def test_build_uses_terraform_region_and_only_explicit_sources(monkeypatch, tmp_
     monkeypatch.setattr('sys.argv', ['build_images.py', 'start'])
     monkeypatch.setattr(module.subprocess, 'check_output', lambda *a, **k: json.dumps({
         'region': {'value': 'us-west-2'}, 'bucket': {'value': 'test-bucket'},
-        'projects': {'value': {'agent': 'agent-build', 'mcp': 'mcp-build'}},
+        'projects': {'value': {'agent': 'agent-build', 'mcp': 'mcp-build', 'knowledge': 'knowledge-build'}},
     }).encode())
 
     def session(**kwargs):
@@ -95,9 +95,9 @@ def test_build_uses_terraform_region_and_only_explicit_sources(monkeypatch, tmp_
     monkeypatch.setattr(module.boto3, 'Session', session)
     module.main()
     assert calls == [{'profile_name': None, 'region_name': 'us-west-2'}]
-    assert len(archives) == 2
+    assert len(archives) == 3
     for archive in archives:
         with module.zipfile.ZipFile(module.io.BytesIO(archive)) as bundle:
             assert 'Dockerfile' in bundle.namelist()
             assert not any('.env' in name or '.tfstate' in name or '.git' in name for name in bundle.namelist())
-    assert set(json.loads(record.read_text())['builds']) == {'agent', 'mcp'}
+    assert set(json.loads(record.read_text())['builds']) == {'agent', 'mcp', 'knowledge'}
