@@ -55,3 +55,25 @@ def test_agent_must_disclose_missing_pe_and_use_snapshot():
         verification.validate_agent_response(dict(response, result='P/E is 20.'), True)
     with pytest.raises(AssertionError):
         verification.validate_agent_response(dict(response, tools_used=[]), True)
+
+
+def test_agent_answer_must_respect_word_limit():
+    with pytest.raises(AssertionError, match='300-word limit'):
+        verification.validate_agent_response({
+            'result': 'word ' * 301, 'tools_used': ['get_company_snapshot']})
+
+
+@pytest.mark.parametrize('text', ['P/E unavailable', '**P/E: Unavailable**', '**P/E** — unavailable'])
+def test_missing_pe_disclosure_accepts_markdown_and_punctuation(text):
+    verification.validate_agent_response({'result': text, 'tools_used': ['get_company_snapshot']}, True)
+
+
+def test_tool_progress_requires_complete_pairs_and_no_payloads():
+    start = {'type': 'tool_call', 'id': 'one', 'tool': 'get_company_snapshot',
+             'server': 'financials', 'status': 'started'}
+    end = dict(start, status='succeeded')
+    verification.validate_tool_events([start, end], ['get_company_snapshot'])
+    for events in ([start], [], [start, dict(end, status='failed')],
+                   [start, dict(end, content='private data')]):
+        with pytest.raises(AssertionError):
+            verification.validate_tool_events(events, ['get_company_snapshot'])

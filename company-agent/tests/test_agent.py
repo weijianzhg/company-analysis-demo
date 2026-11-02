@@ -17,7 +17,7 @@ def test_invalid_requests(payload):
 
 
 def test_results_and_tools_are_returned(monkeypatch):
-    monkeypatch.setattr(main, 'analyze', lambda prompt: {'result': prompt, 'tools_used': ['get_company_snapshot']})
+    monkeypatch.setattr(main, 'analyze', lambda prompt, **kwargs: {'result': prompt, 'tools_used': ['get_company_snapshot']})
     events = list(main.invoke({'prompt': 'IBM P/E'}))
     assert events[0] == {'type': 'heartbeat'}
     assert events[-1]['result'] == 'IBM P/E'
@@ -25,7 +25,7 @@ def test_results_and_tools_are_returned(monkeypatch):
 
 
 def test_provider_exceptions_are_redacted_and_lock_is_released(monkeypatch):
-    def fail(prompt):
+    def fail(prompt, **kwargs):
         raise RuntimeError('secret-api-key')
     monkeypatch.setattr(main, 'analyze', fail)
     events = list(main.invoke({'prompt': 'IBM'}))
@@ -36,7 +36,7 @@ def test_provider_exceptions_are_redacted_and_lock_is_released(monkeypatch):
 
 def test_busy_request_cannot_start_another_worker(monkeypatch):
     release = Event()
-    monkeypatch.setattr(main, 'analyze', lambda prompt: (release.wait(5), {'result': 'done'})[1])
+    monkeypatch.setattr(main, 'analyze', lambda prompt, **kwargs: (release.wait(5), {'result': 'done'})[1])
     events = main.invoke({'prompt': 'IBM'})
     try:
         assert next(events)['type'] == 'heartbeat'
@@ -88,3 +88,28 @@ def test_answer_without_mcp_tool_use_is_not_presented_as_analysis(monkeypatch):
     result = analyst.analyze('Analyze IBM', model=object())
     assert 'did not fetch MCP data' in result['error']
     assert 'result' not in result
+
+
+def test_progress_arrives_before_analysis_finishes(monkeypatch):
+    release = Event()
+    progress = {'type': 'tool_call', 'id': 'one', 'tool': 'read_internal_document',
+                'server': 'internal-knowledge', 'status': 'started'}
+
+    def analyze(prompt, on_tool_event):
+        on_tool_event(progress)
+        assert release.wait(5)
+        on_tool_event(dict(progress, status='succeeded'))
+        return {'result': 'done', 'tools_used': ['read_internal_document']}
+
+    monkeypatch.setattr(main, 'analyze', analyze)
+    events = main.invoke({'prompt': 'Internal IBM notes'})
+    try:
+        assert next(events)['type'] == 'heartbeat'
+        assert next(events) == progress
+        assert main.invocation_lock.locked()
+    finally:
+        release.set()
+    remaining = list(events)
+    assert remaining[0]['status'] == 'succeeded'
+    assert remaining[-1]['result'] == 'done'
+    assert not main.invocation_lock.locked()

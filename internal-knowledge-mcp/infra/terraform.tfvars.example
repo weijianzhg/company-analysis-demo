@@ -1,0 +1,6 @@
+aws_region       = "eu-west-1"
+container_tag    = "latest"
+knowledge_bucket = "your-internal-knowledge-bucket"
+knowledge_prefix = "knowledge/"
+# For a bucket encrypted with a customer-managed KMS key:
+# knowledge_kms_key_arn = "arn:aws:kms:eu-west-1:ACCOUNT:key/ID"

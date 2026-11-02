@@ -2,10 +2,15 @@
 set -euo pipefail
 DEMO_DIR="$(cd "$(dirname "$0")" && pwd)"
 uv sync --project "$DEMO_DIR/alpha-vantage-mcp/mcp_server" --dev --frozen
+uv sync --project "$DEMO_DIR/internal-knowledge-mcp/mcp_server" --dev --frozen
 uv sync --project "$DEMO_DIR/company-agent/agents" --dev --frozen
 (
   cd "$DEMO_DIR/alpha-vantage-mcp"
   uv run --project mcp_server --frozen pytest tests/mcp_server -q
+)
+(
+  cd "$DEMO_DIR/internal-knowledge-mcp"
+  uv run --project mcp_server --frozen pytest tests -q
 )
 (
   cd "$DEMO_DIR/company-agent"
